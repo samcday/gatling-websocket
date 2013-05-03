@@ -30,18 +30,18 @@ open in the log; if omitted it defaults to the name of the session attribute.
 You can specify extra headers to include in the initial HTTP request that sets
 up the socket:
 
-   websocket("socket").open("ws://<url>/", "socket_open").
-     header("header", "value").
-     headers(Map("header1" -> "value1", "header2" -> "value2"))
+    websocket("socket").open("ws://<url>/", "socket_open").
+      header("header", "value").
+      headers(Map("header1" -> "value1", "header2" -> "value2"))
 
 HTTP BASIC authentication is supported:
 
-   websocket("socket").open("ws://<url>/", "socket_open").
-     basicAuth("myUser", "myPassword")
+    websocket("socket").open("ws://<url>/", "socket_open").
+      basicAuth("myUser", "myPassword")
 
 You can send a text frame on an open socket:
 
-    websocket("socket").sendMessage("test", "socket_send")
+     websocket("socket").sendMessage("test", "socket_send")
 
 Again, the second parameter is optional and is the request name used to record
 whether sending succeeded or not in the log (the time taken to send is usually
