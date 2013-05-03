@@ -27,6 +27,18 @@ reference the socket later in the simulation. The second parameter to `open` is
 optional and is the name used to record the amount of time the socket took to
 open in the log; if omitted it defaults to the name of the session attribute.
 
+You can specify extra headers to include in the initial HTTP request that sets
+up the socket:
+
+   websocket("socket").open("ws://<url>/", "socket_open").
+     header("header", "value").
+     headers(Map("header1" -> "value1", "header2" -> "value2"))
+
+HTTP BASIC authentication is supported:
+
+   websocket("socket").open("ws://<url>/", "socket_open").
+     basicAuth("myUser", "myPassword")
+
 You can send a text frame on an open socket:
 
     websocket("socket").sendMessage("test", "socket_send")
@@ -57,7 +69,7 @@ Complete example
 License
 =======
 
-Copyright 2012 Gilt Groupe, Inc.
+Copyright 2012-2013 Gilt Groupe, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

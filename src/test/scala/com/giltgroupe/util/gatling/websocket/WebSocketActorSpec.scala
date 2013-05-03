@@ -7,6 +7,7 @@ import com.excilys.ebi.gatling.core.action.system
 import com.excilys.ebi.gatling.core.config.{GatlingConfiguration, ProtocolConfigurationRegistry}
 import com.excilys.ebi.gatling.core.result.message.RequestStatus._
 import com.excilys.ebi.gatling.core.session.Session
+import com.excilys.ebi.gatling.http.config.HttpProtocolConfiguration
 import com.ning.http.client.websocket.{WebSocket, WebSocketListener}
 import java.net.URI
 import java.io.IOException
@@ -41,7 +42,12 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
     }
 
     "record a failed open and advance" in new scope {
-      open(mock[WebSocketClient].open(any[URI], any[WebSocketListener]) throws new IOException("testErrorMessage"))
+      open(mock[WebSocketClient].open(
+        any[OpenWebSocketActionBuilder],
+        any[Session],
+        any[HttpProtocolConfiguration],
+        any[WebSocketListener]
+      ) throws new IOException("testErrorMessage"))
 
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(KO), anyLong, anyLong, anArgThat(contains("testErrorMessage")))
       next.underlyingActor.session.map(_.isAttributeDefined("testAttributeName")) mustEqual Some(false)
@@ -130,8 +136,13 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
     var next: TestActorRef[DummyAction] = _
 
     def webSocketClient(open: (WebSocketListener) => Unit) = {
-      mock[WebSocketClient].open(any[URI], any[WebSocketListener]) answers {(params, _) =>
-        open(params.asInstanceOf[Array[_]](1).asInstanceOf[WebSocketListener])
+      mock[WebSocketClient].open(
+        any[OpenWebSocketActionBuilder],
+        any[Session],
+        any[HttpProtocolConfiguration],
+        any[WebSocketListener]
+      ) answers {(params, _) =>
+        open(params.asInstanceOf[Array[_]](3).asInstanceOf[WebSocketListener])
       }
     }
 

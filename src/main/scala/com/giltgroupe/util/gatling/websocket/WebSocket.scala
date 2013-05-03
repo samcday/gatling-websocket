@@ -1,18 +1,24 @@
 package com.giltgroupe.util.gatling.websocket
 
 import java.io.IOException
-import java.net.URI
 
 import com.excilys.ebi.gatling.core.action.{ Action, BaseActor, Bypass }
 import com.excilys.ebi.gatling.core.action.builder.ActionBuilder
 import com.excilys.ebi.gatling.core.action.system
+import com.excilys.ebi.gatling.core.config.GatlingConfiguration._
 import com.excilys.ebi.gatling.core.config.ProtocolConfigurationRegistry
 import com.excilys.ebi.gatling.core.result.message.RequestStatus.{ KO, OK, RequestStatus }
 import com.excilys.ebi.gatling.core.result.writer.DataWriter
+import com.excilys.ebi.gatling.core.session.ELParser._
 import com.excilys.ebi.gatling.core.session.{ EvaluatableString, Session }
 import com.excilys.ebi.gatling.core.util.StringHelper.END_OF_LINE
 import com.excilys.ebi.gatling.core.util.TimeHelper.nowMillis
 import com.excilys.ebi.gatling.http.ahc.GatlingHttpClient
+import com.excilys.ebi.gatling.http.config.HttpProtocolConfiguration
+import com.excilys.ebi.gatling.http.cookie.CookieHandling
+import com.excilys.ebi.gatling.http.referer.RefererHandling
+import com.ning.http.client.{ FluentCaseInsensitiveStringsMap, Realm, RequestBuilder }
+import com.ning.http.client.Realm.AuthScheme
 import com.ning.http.client.websocket.{ WebSocket, WebSocketListener, WebSocketTextListener, WebSocketUpgradeHandler }
 
 import akka.actor.{ ActorRef, Props }
@@ -28,8 +34,14 @@ object Predef {
 
   /** The default AsyncHttpClient WebSocket client. */
   implicit object WebSocketClient extends WebSocketClient with Logging {
-    def open(uri: URI, listener: WebSocketListener) {
-      GatlingHttpClient.defaultClient.prepareGet(uri.toString).execute(
+    def open(
+        actionBuilder: OpenWebSocketActionBuilder,
+        session: Session,
+        protocolConfiguration: HttpProtocolConfiguration,
+        listener: WebSocketListener
+    ) {
+      val request = actionBuilder.getAHCRequestBuilder(session, protocolConfiguration).build
+      GatlingHttpClient.newClient(session).prepareRequest(request).execute(
         new WebSocketUpgradeHandler.Builder().addWebSocketListener(listener).build())
     }
   }
@@ -46,7 +58,12 @@ object Predef {
 
 trait WebSocketClient {
   @throws(classOf[IOException])
-  def open(uri: URI, listener: WebSocketListener)
+  def open(
+    actionBuilder: OpenWebSocketActionBuilder,
+    session: Session,
+    protocolConfiguration: HttpProtocolConfiguration,
+    listener: WebSocketListener
+  )
 }
 
 trait RequestLogger {
@@ -60,7 +77,13 @@ class WebSocketBaseBuilder(val attributeName: String) {
    * @param fUrl The socket URL
    * @param actionName The action name in the log
    */
-  def open(fUrl: EvaluatableString, actionName: EvaluatableString = (_ => attributeName))(implicit webSocketClient: WebSocketClient, requestLogger: RequestLogger) = new OpenWebSocketActionBuilder(attributeName, actionName, fUrl, webSocketClient, requestLogger)
+  def open(fUrl: EvaluatableString, actionName: EvaluatableString = _ => attributeName)
+          (implicit webSocketClient: WebSocketClient, requestLogger: RequestLogger) = new OpenWebSocketActionBuilder(
+    attributeName,
+    OpenWebSocketAttributes(actionName, fUrl, Map.empty, None),
+    webSocketClient,
+    requestLogger
+  )
 
   /**
    * Sends a message on the given socket.
@@ -68,20 +91,155 @@ class WebSocketBaseBuilder(val attributeName: String) {
    * @param fMessage The message
    * @param actionName The action name in the log
    */
-  def sendMessage(fMessage: EvaluatableString, actionName: EvaluatableString = (_ => attributeName)) = new SendWebSocketMessageActionBuilder(attributeName, actionName, fMessage)
+  def sendMessage(fMessage: EvaluatableString, actionName: EvaluatableString = _ => attributeName) = new SendWebSocketMessageActionBuilder(attributeName, actionName, fMessage)
 
   /**
    * Closes a web socket.
    *
    * @param actionName The action name in the log
    */
-  def close(actionName: EvaluatableString = (_ => attributeName)) = new CloseWebSocketActionBuilder(attributeName, actionName)
+  def close(actionName: EvaluatableString = _ => attributeName) = new CloseWebSocketActionBuilder(attributeName, actionName)
 }
 
-class OpenWebSocketActionBuilder(val attributeName: String, val actionName: EvaluatableString, val fUrl: EvaluatableString, val webSocketClient: WebSocketClient, val requestLogger: RequestLogger, val next: ActorRef = null) extends ActionBuilder {
-  def withNext(next: ActorRef): ActionBuilder = new OpenWebSocketActionBuilder(attributeName, actionName, fUrl, webSocketClient, requestLogger, next)
+case class OpenWebSocketAttributes(
+  actionName: EvaluatableString,
+  fUrl: EvaluatableString,
+  headers: Map[String, EvaluatableString],
+  realm: Option[Session => Realm]
+)
 
-  def build(registry: ProtocolConfigurationRegistry): ActorRef = system.actorOf(Props(new OpenWebSocketAction(attributeName, actionName, fUrl, webSocketClient, requestLogger, next, registry)))
+class OpenWebSocketActionBuilder(
+    val attributeName: String,
+    val owsAttributes: OpenWebSocketAttributes,
+    val webSocketClient: WebSocketClient,
+    val requestLogger: RequestLogger,
+    val next: ActorRef = null
+) extends ActionBuilder {
+  private def newInstance(newOwsAttributes: OpenWebSocketAttributes, newNext: ActorRef = next) = {
+    new OpenWebSocketActionBuilder(attributeName, newOwsAttributes, webSocketClient, requestLogger, newNext)
+  }
+
+  /**
+   * Adds a header to the request
+   *
+   * @param header the header to add, eg: ("Content-Type", "application/json")
+   */
+  def header(header: (String, String)): OpenWebSocketActionBuilder = {
+    newInstance(owsAttributes.copy(headers = owsAttributes.headers + (header._1 -> parseEL(header._2))))
+  }
+
+  /**
+   * Adds several headers to the request at the same time
+   *
+   * @param givenHeaders a scala map containing the headers to add
+   */
+  def headers(givenHeaders: Map[String, String]): OpenWebSocketActionBuilder = {
+    newInstance(owsAttributes.copy(headers = owsAttributes.headers ++ givenHeaders.mapValues(parseEL)))
+  }
+
+  /**
+   * Adds BASIC authentication to the request
+   *
+   * @param username the username needed
+   * @param password the password needed
+   */
+  def basicAuth(username: EvaluatableString, password: EvaluatableString): OpenWebSocketActionBuilder = {
+    val buildRealm = {session: Session =>
+      new Realm.RealmBuilder().
+        setPrincipal(username(session)).
+        setPassword(password(session)).
+        setUsePreemptiveAuth(true).
+        setScheme(AuthScheme.BASIC).
+        build
+    }
+    newInstance(owsAttributes.copy(realm = Some(buildRealm)))
+  }
+
+  private[websocket] def getAHCRequestBuilder(
+      session: Session,
+      protocolConfiguration: HttpProtocolConfiguration
+  ): RequestBuilder = {
+    val requestBuilder = new RequestBuilder("GET", configuration.http.useRawUrl)
+
+    val isWss = configureURLAndCookies(requestBuilder, session, protocolConfiguration)
+    configureProxy(requestBuilder, session, isWss, protocolConfiguration)
+    configureHeaders(requestBuilder, owsAttributes.headers, session, protocolConfiguration)
+    configureRealm(requestBuilder, owsAttributes.realm, session)
+
+    requestBuilder
+  }
+
+  private[this] def configureURLAndCookies(
+      requestBuilder: RequestBuilder,
+      session: Session,
+      protocolConfiguration: HttpProtocolConfiguration
+  ) = {
+    val providedUrl = owsAttributes.fUrl(session)
+
+    // baseUrl implementation
+    val resolvedUrl = if (providedUrl.startsWith("ws"))
+      providedUrl
+    else
+      protocolConfiguration.baseURL().getOrElse(throw new IllegalArgumentException(
+        "No protocolConfiguration.baseURL defined but provided url is relative : " + providedUrl
+      )) + providedUrl
+
+    requestBuilder.setUrl(resolvedUrl)
+
+    for (cookie <- CookieHandling.getStoredCookies(session, resolvedUrl))
+      requestBuilder.addCookie(cookie)
+
+    resolvedUrl.startsWith("wss")
+  }
+
+  private[this] def configureProxy(
+      requestBuilder: RequestBuilder,
+      session: Session,
+      isWss: Boolean,
+      protocolConfiguration: HttpProtocolConfiguration
+  ) = {
+    (if (isWss)
+      protocolConfiguration.securedProxy
+    else
+      protocolConfiguration.proxy).map(requestBuilder.setProxyServer)
+  }
+
+  private[this] def configureHeaders(
+      requestBuilder: RequestBuilder,
+      headers: Map[String, EvaluatableString],
+      session: Session,
+      protocolConfiguration: HttpProtocolConfiguration
+  ) {
+    requestBuilder.setHeaders(new FluentCaseInsensitiveStringsMap)
+
+    val baseHeaders = protocolConfiguration.baseHeaders
+    val resolvedRequestHeaders = headers.map {
+      case (headerName, headerValue) => headerName -> headerValue(session)
+    }
+
+    val newHeaders = RefererHandling.addStoredRefererHeader(
+      baseHeaders ++ resolvedRequestHeaders, session, protocolConfiguration
+    )
+
+    newHeaders.foreach {
+      case (headerName, headerValue) => requestBuilder.addHeader(headerName, headerValue)
+    }
+  }
+
+  private[this] def configureRealm(requestBuilder: RequestBuilder, realm: Option[Session => Realm], session: Session) {
+    realm.map { realm => requestBuilder.setRealm(realm(session)) }
+  }
+
+  def withNext(next: ActorRef): ActionBuilder = newInstance(owsAttributes, next)
+
+  def build(registry: ProtocolConfigurationRegistry): ActorRef = system.actorOf(Props(new OpenWebSocketAction(
+    attributeName,
+    this,
+    webSocketClient,
+    requestLogger,
+    next,
+    registry.getProtocolConfiguration(HttpProtocolConfiguration.DEFAULT_HTTP_PROTOCOL_CONFIG)
+  )))
 }
 
 class SendWebSocketMessageActionBuilder(val attributeName: String, val actionName: EvaluatableString, val fMessage: EvaluatableString, val next: ActorRef = null) extends ActionBuilder {
@@ -101,12 +259,19 @@ private[websocket] abstract class WebSocketAction(actionName: EvaluatableString)
     try {
       actionName(session)
     } catch {
-      case e => error("Action name resolution crashed", e); "no-name"
+      case e: Exception => error("Action name resolution crashed", e); "no-name"
     }
   }
 }
 
-private[websocket] class OpenWebSocketAction(attributeName: String, actionName: EvaluatableString, fUrl: EvaluatableString, webSocketClient: WebSocketClient, requestLogger: RequestLogger, val next: ActorRef, registry: ProtocolConfigurationRegistry) extends WebSocketAction(actionName) {
+private[websocket] class OpenWebSocketAction(
+    attributeName: String,
+    actionBuilder: OpenWebSocketActionBuilder,
+    webSocketClient: WebSocketClient,
+    requestLogger: RequestLogger,
+    val next: ActorRef,
+    httpConfig: HttpProtocolConfiguration
+) extends WebSocketAction(actionBuilder.owsAttributes.actionName) {
   def execute(session: Session) {
     val rActionName = resolvedActionName(session)
 
@@ -116,7 +281,7 @@ private[websocket] class OpenWebSocketAction(attributeName: String, actionName: 
 
     val started = nowMillis
     try {
-      webSocketClient.open(URI.create(fUrl(session)), new WebSocketTextListener {
+      webSocketClient.open(actionBuilder, session, httpConfig, new WebSocketTextListener {
         var opened = false
 
         def onOpen(webSocket: WebSocket) {
@@ -173,9 +338,9 @@ private[websocket] class WebSocketActor(val attributeName: String, requestLogger
   var errorMessage: Option[String] = None
 
   def receive = {
-    case OnOpen(actionName, webSocket, started, ended, next, session) =>
+    case OnOpen(actionName, openedWebSocket, started, ended, next, session) =>
       requestLogger.logRequest(session, actionName, OK, started, ended)
-      this.webSocket = Some(webSocket)
+      webSocket = Some(openedWebSocket)
       next ! session.setAttribute(attributeName, (self, webSocket))
 
     case OnFailedOpen(actionName, message, started, ended, next, session) =>
