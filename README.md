@@ -11,7 +11,7 @@ First create the jar:
 
     sbt package
 
-... then copy `target/gatling-websocket-0.0.8.jar` to Gatling's `lib`
+... then copy `target/gatling-websocket-0.0.9.jar` to Gatling's `lib`
 directory.
 
 In your simulation, import the DSL:

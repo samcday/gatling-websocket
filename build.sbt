@@ -2,7 +2,7 @@ name := "gatling-websocket"
 
 organization := "com.giltgroupe.util"
 
-version := "0.0.8"
+version := "0.0.9"
 
 scalaVersion := "2.9.3"
 
