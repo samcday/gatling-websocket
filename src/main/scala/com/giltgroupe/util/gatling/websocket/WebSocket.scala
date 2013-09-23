@@ -388,7 +388,7 @@ private[websocket] class WebSocketActor(
     case OnOpen(actionName, openedWebSocket, started, ended, next, session) =>
       requestLogger.logRequest(session, actionName, OK, started, ended)
       webSocket = Some(openedWebSocket)
-      next ! session.setAttribute(attributeName, (self, webSocket))
+      next ! session.setAttribute(attributeName, (self, openedWebSocket))
 
     case OnFailedOpen(actionName, message, started, ended, next, session) =>
       warn("Websocket '" + attributeName + "' failed to open: " + message)
