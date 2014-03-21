@@ -2,12 +2,12 @@ package com.giltgroupe.util.gatling.websocket
 
 import akka.actor.{Actor, Props}
 import akka.testkit.TestActorRef
-import com.excilys.ebi.gatling.core.Predef._
-import com.excilys.ebi.gatling.core.action.system
-import com.excilys.ebi.gatling.core.config.{GatlingConfiguration, ProtocolConfigurationRegistry}
-import com.excilys.ebi.gatling.core.result.message.RequestStatus._
-import com.excilys.ebi.gatling.core.session.Session
-import com.excilys.ebi.gatling.http.config.HttpProtocolConfiguration
+import io.gatling.core.Predef._
+import io.gatling.core.action.system
+import io.gatling.core.config.{GatlingConfiguration, ProtocolConfigurationRegistry}
+import io.gatling.core.result.message.RequestStatus._
+import io.gatling.core.session.Session
+import io.gatling.http.config.HttpProtocol
 import com.ning.http.client.websocket.{WebSocket, WebSocketListener}
 import java.net.URI
 import java.io.IOException
@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 import org.specs2.specification.{AllExpectations, Scope}
+import io.gatling.core.result.message.{KO, OK}
 
 @RunWith(classOf[JUnitRunner])
 class WebSocketActorSpec extends Specification with AllExpectations with Mockito {
@@ -45,7 +46,7 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
       open(mock[WebSocketClient].open(
         any[OpenWebSocketActionBuilder],
         any[Session],
-        any[HttpProtocolConfiguration],
+        any[HttpProtocol],
         any[WebSocketListener]
       ) throws new IOException("testErrorMessage"))
 

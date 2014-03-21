@@ -2,28 +2,36 @@ package com.giltgroupe.util.gatling.websocket
 
 import java.io.IOException
 
-import com.excilys.ebi.gatling.core.action.{ Action, BaseActor, Bypass }
-import com.excilys.ebi.gatling.core.action.builder.ActionBuilder
-import com.excilys.ebi.gatling.core.action.system
-import com.excilys.ebi.gatling.core.config.GatlingConfiguration._
-import com.excilys.ebi.gatling.core.config.ProtocolConfigurationRegistry
-import com.excilys.ebi.gatling.core.result.message.RequestStatus.{ KO, OK, RequestStatus }
-import com.excilys.ebi.gatling.core.result.writer.DataWriter
-import com.excilys.ebi.gatling.core.session.ELParser._
-import com.excilys.ebi.gatling.core.session.{ EvaluatableString, Session }
-import com.excilys.ebi.gatling.core.util.StringHelper.END_OF_LINE
-import com.excilys.ebi.gatling.core.util.TimeHelper.nowMillis
-import com.excilys.ebi.gatling.http.ahc.GatlingHttpClient
-import com.excilys.ebi.gatling.http.config.HttpProtocolConfiguration
-import com.excilys.ebi.gatling.http.cookie.CookieHandling
-import com.excilys.ebi.gatling.http.referer.RefererHandling
+import io.gatling.core.action.{ Action, BaseActor }
+import io.gatling.core.action.builder.ActionBuilder
+import io.gatling.core.action.system
+import io.gatling.core.config.GatlingConfiguration._
+import io.gatling.core.result.message.{ KO, OK, Status}
+import io.gatling.core.result.writer.DataWriter
+import io.gatling.core.session._
+import io.gatling.core.util.TimeHelper.nowMillis
+import io.gatling.http.ahc.{HttpClient}
+import io.gatling.core.util.StringHelper.eol
+import io.gatling.http.config.HttpProtocol
+import io.gatling.http.cookie.CookieHandling
+import io.gatling.http.referer.RefererHandling
 import com.ning.http.client.{ FluentCaseInsensitiveStringsMap, Realm, RequestBuilder }
 import com.ning.http.client.Realm.AuthScheme
 import com.ning.http.client.websocket.{
   WebSocket, WebSocketListener, WebSocketTextListener, WebSocketUpgradeHandler }
 
 import akka.actor.{ ActorRef, Props }
-import grizzled.slf4j.Logging
+import com.typesafe.scalalogging.slf4j.Logging
+import com.giltgroupe.util.gatling.websocket.Close
+import scala.Some
+import com.giltgroupe.util.gatling.websocket.OpenWebSocketAttributes
+import com.giltgroupe.util.gatling.websocket.OnError
+import com.giltgroupe.util.gatling.websocket.SendMessage
+import com.giltgroupe.util.gatling.websocket.OnFailedOpen
+import io.gatling.core.session.Session
+import com.giltgroupe.util.gatling.websocket.OnOpen
+import com.giltgroupe.util.gatling.websocket.OnMessage
+import io.gatling.core.validation.Validation
 
 object Predef {
   /**
@@ -38,20 +46,20 @@ object Predef {
     def open(
         actionBuilder: OpenWebSocketActionBuilder,
         session: Session,
-        protocolConfiguration: HttpProtocolConfiguration,
+        protocolConfiguration: HttpProtocol,
         listener: WebSocketListener) {
       val request = actionBuilder.getAHCRequestBuilder(session, protocolConfiguration).build
-      GatlingHttpClient.newClient(session).prepareRequest(request).execute(
+      HttpClient.newClient(session).prepareRequest(request).execute(
         new WebSocketUpgradeHandler.Builder().addWebSocketListener(listener).build())
     }
   }
 
   /** The default Gatling request logger. */
-  implicit object RequestLogger extends RequestLogger {
+  implicit object RequestLogger extends  {
     def logRequest(
         session: Session,
         actionName: String,
-        requestStatus: RequestStatus,
+        requestStatus: Status,
         started: Long,
         ended: Long,
         errorMessage: Option[String]) {
@@ -67,7 +75,7 @@ trait WebSocketClient {
   def open(
     actionBuilder: OpenWebSocketActionBuilder,
     session: Session,
-    protocolConfiguration: HttpProtocolConfiguration,
+    protocolConfiguration: HttpProtocol,
     listener: WebSocketListener)
 }
 
@@ -75,20 +83,20 @@ trait RequestLogger {
   def logRequest(
     session: Session,
     actionName: String,
-    requestStatus: RequestStatus,
+    requestStatus: Status,
     started: Long,
     ended: Long,
     errorMessage: Option[String] = None)
 }
 
-class WebSocketBaseBuilder(val attributeName: String) {
+class WebSocketBaseBuilder(val attributeName: Validation[String]) {
   /**
    * Opens a web socket and stores it in the session.
    *
    * @param fUrl The socket URL
    * @param actionName The action name in the log
    */
-  def open(fUrl: EvaluatableString, actionName: EvaluatableString = _ => attributeName)
+  def open(fUrl: Expression[String], actionName: Expression[String] = _ => attributeName)
           (implicit webSocketClient: WebSocketClient, requestLogger: RequestLogger) =
     new OpenWebSocketActionBuilder(
       attributeName,
@@ -103,8 +111,8 @@ class WebSocketBaseBuilder(val attributeName: String) {
    * @param actionName The action name in the log
    */
   def sendMessage(
-      fMessage: EvaluatableString,
-      actionName: EvaluatableString = _ => attributeName) =
+      fMessage: Expression[String],
+      actionName: Expression[String] = _ => attributeName) =
     new SendWebSocketMessageActionBuilder(attributeName, actionName, fMessage)
 
   /**
@@ -112,18 +120,18 @@ class WebSocketBaseBuilder(val attributeName: String) {
    *
    * @param actionName The action name in the log
    */
-  def close(actionName: EvaluatableString = _ => attributeName) =
+  def close(actionName: Expression[String] = _ => attributeName) =
     new CloseWebSocketActionBuilder(attributeName, actionName)
 }
 
 case class OpenWebSocketAttributes(
-  actionName: EvaluatableString,
-  fUrl: EvaluatableString,
-  headers: Map[String, EvaluatableString],
+  actionName: Expression[String],
+  fUrl: Expression[String],
+  headers: Map[String, Expression[String]],
   realm: Option[Session => Realm])
 
 class OpenWebSocketActionBuilder(
-    val attributeName: String,
+    val attributeName: Validation[String],
     val owsAttributes: OpenWebSocketAttributes,
     val webSocketClient: WebSocketClient,
     val requestLogger: RequestLogger,
@@ -273,8 +281,8 @@ class SendWebSocketMessageActionBuilder(
 }
 
 class CloseWebSocketActionBuilder(
-    val attributeName: String,
-    val actionName: EvaluatableString,
+    val attributeName: Validation[String],
+    val actionName: Expression[String],
     val next: ActorRef = null) extends ActionBuilder {
   def withNext(next: ActorRef): ActionBuilder =
     new CloseWebSocketActionBuilder(attributeName, actionName, next)
@@ -365,14 +373,14 @@ private[websocket] class SendWebSocketMessageAction(
 
 private[websocket] class CloseWebSocketAction(
     attributeName: String,
-    actionName: EvaluatableString,
+    actionName: Expression[String],
     val next: ActorRef,
     registry: ProtocolConfigurationRegistry) extends WebSocketAction(actionName) {
   def execute(session: Session) {
     val rActionName = resolvedActionName(session)
     info("Closing websocket '" + attributeName + "': Scenario '" +
       session.scenarioName + "', UserId #" + session.userId)
-    session.getAttributeAsOption[(ActorRef, _)](attributeName) foreach {
+    session(attributeName).asOption[(ActorRef, _)] foreach {
       _._1 ! Close(rActionName, next, session)
     }
   }
@@ -388,16 +396,16 @@ private[websocket] class WebSocketActor(
     case OnOpen(actionName, openedWebSocket, started, ended, next, session) =>
       requestLogger.logRequest(session, actionName, OK, started, ended)
       webSocket = Some(openedWebSocket)
-      next ! session.setAttribute(attributeName, (self, openedWebSocket))
+      next ! session.set(attributeName, (self, openedWebSocket))
 
     case OnFailedOpen(actionName, message, started, ended, next, session) =>
       warn("Websocket '" + attributeName + "' failed to open: " + message)
       requestLogger.logRequest(session, actionName, KO, started, ended, Some(message))
-      next ! session.setFailed
+      next ! session.markAsFailed
       context.stop(self)
 
     case OnMessage(message) =>
-      debug("Received message on websocket '" + attributeName + "':" + END_OF_LINE + message)
+      debug("Received message on websocket '" + attributeName + "':" + eol + message)
 
     case OnClose =>
       errorMessage = Some("Websocket '" + attributeName + "' was unexpectedly closed")
@@ -430,7 +438,7 @@ private[websocket] class WebSocketActor(
       val now = nowMillis
       requestLogger.logRequest(session, actionName, KO, now, now, errorMessage)
       errorMessage = None
-      next ! session.setFailed
+      next ! session.markAsFailed
       context.stop(self)
       true
     } else {
