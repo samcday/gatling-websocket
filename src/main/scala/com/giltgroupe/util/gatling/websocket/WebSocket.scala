@@ -39,7 +39,7 @@ object Predef {
    *
    * @param attributeName The name of the session attribute that stores the socket
    */
-  def websocket(attributeName: String) = new WebSocketBaseBuilder(attributeName)
+  def websocket(attributeName: Expression[String]) = new WebSocketBaseBuilder(attributeName)
 
   /** The default AsyncHttpClient WebSocket client. */
   implicit object WebSocketClient extends WebSocketClient with Logging {
@@ -89,7 +89,7 @@ trait RequestLogger {
     errorMessage: Option[String] = None)
 }
 
-class WebSocketBaseBuilder(val attributeName: Validation[String]) {
+class WebSocketBaseBuilder(val attributeName: Expression[String]) {
   /**
    * Opens a web socket and stores it in the session.
    *
@@ -131,7 +131,7 @@ case class OpenWebSocketAttributes(
   realm: Option[Session => Realm])
 
 class OpenWebSocketActionBuilder(
-    val attributeName: Validation[String],
+    val attributeName: Expression[String],
     val owsAttributes: OpenWebSocketAttributes,
     val webSocketClient: WebSocketClient,
     val requestLogger: RequestLogger,
@@ -268,9 +268,9 @@ class OpenWebSocketActionBuilder(
 }
 
 class SendWebSocketMessageActionBuilder(
-    val attributeName: String,
-    val actionName: EvaluatableString,
-    val fMessage: EvaluatableString,
+    val attributeName: Expression[String],
+    val actionName: Expression[String],
+    val fMessage: Expression[String],
     val next: ActorRef = null) extends ActionBuilder {
   def withNext(next: ActorRef): ActionBuilder =
     new SendWebSocketMessageActionBuilder(attributeName, actionName, fMessage, next)
@@ -281,7 +281,7 @@ class SendWebSocketMessageActionBuilder(
 }
 
 class CloseWebSocketActionBuilder(
-    val attributeName: Validation[String],
+    val attributeName: Expression[String],
     val actionName: Expression[String],
     val next: ActorRef = null) extends ActionBuilder {
   def withNext(next: ActorRef): ActionBuilder =
@@ -292,8 +292,8 @@ class CloseWebSocketActionBuilder(
 }
 
 private[websocket] abstract class WebSocketAction(
-    actionName: EvaluatableString) extends Action() with Bypass {
-  def resolvedActionName(session: Session): String = {
+    actionName: Expression[String]) extends Action() with Bypass {
+  def resolvedActionName(session: Session): Validation[String] = {
     try {
       actionName(session)
     } catch {
@@ -360,12 +360,12 @@ private[websocket] class OpenWebSocketAction(
 
 private[websocket] class SendWebSocketMessageAction(
     attributeName: String,
-    actionName: EvaluatableString,
-    fMessage: EvaluatableString,
+    actionName: Expression[String],
+    fMessage: Expression[String],
     val next: ActorRef,
     registry: ProtocolConfigurationRegistry) extends WebSocketAction(actionName) {
   def execute(session: Session) {
-    session.getAttributeAsOption[(ActorRef, _)](attributeName) foreach {
+    session(attributeName).asOption[(ActorRef, _)] foreach {
       _._1 ! SendMessage(resolvedActionName(session), fMessage(session), next, session)
     }
   }

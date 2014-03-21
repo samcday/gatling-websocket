@@ -5,7 +5,7 @@ import akka.testkit.TestActorRef
 import io.gatling.core.Predef._
 import io.gatling.core.action.system
 import io.gatling.core.config.{GatlingConfiguration, ProtocolConfigurationRegistry}
-import io.gatling.core.result.message.RequestStatus._
+import io.gatling.core.result.message.{Status, OK, KO}
 import io.gatling.core.session.Session
 import io.gatling.http.config.HttpProtocol
 import com.ning.http.client.websocket.{WebSocket, WebSocketListener}
