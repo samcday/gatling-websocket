@@ -4,7 +4,7 @@ import akka.actor.{Actor, Props}
 import akka.testkit.TestActorRef
 import io.gatling.core.Predef._
 import io.gatling.core.action.system
-import io.gatling.core.config.{GatlingConfiguration, ProtocolConfigurationRegistry}
+import io.gatling.core.config.{GatlingConfiguration, ProtocolRegistry}
 import io.gatling.core.result.message.{Status, OK, KO}
 import io.gatling.core.session.Session
 import io.gatling.http.config.HttpProtocol
@@ -140,7 +140,7 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
       mock[WebSocketClient].open(
         any[OpenWebSocketActionBuilder],
         any[Session],
-        any[HttpProtocolConfiguration],
+        any[HttpProtocol],
         any[WebSocketListener]
       ) answers {(params, _) =>
         open(params.asInstanceOf[Array[_]](3).asInstanceOf[WebSocketListener])
@@ -152,7 +152,7 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
       val action = Predef.websocket("testAttributeName")
         .open("ws://dummy/", "testRequestName")(webSocketClient, requestLogger)
         .withNext(next).asInstanceOf[OpenWebSocketActionBuilder]
-        .build(DummyProtocolConfigurationRegistry)
+        .build()
 
       action ! new Session("test", 0)
     }
@@ -178,7 +178,7 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
       val action = Predef.websocket("testAttributeName")
         .sendMessage(message)
         .withNext(next).asInstanceOf[SendWebSocketMessageActionBuilder]
-        .build(DummyProtocolConfigurationRegistry)
+        .build()
 
       action ! session
     }
@@ -189,7 +189,7 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
       val action = Predef.websocket("testAttributeName")
         .close()
         .withNext(next).asInstanceOf[CloseWebSocketActionBuilder]
-        .build(DummyProtocolConfigurationRegistry)
+        .build()
 
       action ! session
     }
