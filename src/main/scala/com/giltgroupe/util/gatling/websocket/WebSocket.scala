@@ -227,8 +227,6 @@ class OpenWebSocketActionBuilder(
       .flatMap(configureRealm)
   }
 
-  def withNext(next: ActorRef): ActionBuilder = newInstance(owsAttributes)
-
   def build(next: ActorRef): ActorRef =
     system.actorOf(Props(new OpenWebSocketAction(
       attributeName,
@@ -243,8 +241,6 @@ class SendWebSocketMessageActionBuilder(
     val attributeName: Expression[String],
     val actionName: Expression[String],
     val fMessage: Expression[String]) extends ActionBuilder {
-  def withNext(next: ActorRef): ActionBuilder =
-    new SendWebSocketMessageActionBuilder(attributeName, actionName, fMessage)
 
   def build(next: ActorRef): ActorRef =
     system.actorOf(Props(new SendWebSocketMessageAction(
@@ -254,8 +250,6 @@ class SendWebSocketMessageActionBuilder(
 class CloseWebSocketActionBuilder(
     val attributeName: Expression[String],
     val actionName: Expression[String]) extends ActionBuilder {
-  def withNext(next: ActorRef): ActionBuilder =
-    new CloseWebSocketActionBuilder(attributeName, actionName)
 
   def build(next: ActorRef): ActorRef =
     system.actorOf(Props(new CloseWebSocketAction(attributeName, actionName, next)))

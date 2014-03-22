@@ -6,7 +6,7 @@ import io.gatling.core.Predef._
 import io.gatling.core.action.system
 import io.gatling.core.config.{GatlingConfiguration, ProtocolRegistry}
 import io.gatling.core.result.message.{Status, OK, KO}
-import io.gatling.core.session.Session
+import io.gatling.core.session.{Expression, Session}
 import io.gatling.http.config.HttpProtocol
 import com.ning.http.client.websocket.{WebSocket, WebSocketListener}
 import java.net.URI
@@ -30,6 +30,7 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
     LoggerFactory.getLogger(classOf[WebSocketActorSpec])
     // set up configuration to avoid NPEs constructing actors
     GatlingConfiguration.setUp()
+    ProtocolRegistry.setUp(protocols = Seq())
     success
   }
 
@@ -37,9 +38,10 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
     "record a successful open and advance" in new scope {
       open(webSocketClient(_.onOpen(mock[WebSocket].smart)))
 
+      Thread.sleep(100)
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(OK), anyLong, anyLong, isEq(null))
-      next.underlyingActor.session.map(_.isAttributeDefined("testAttributeName")) mustEqual Some(true)
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(false)
+      next.underlyingActor.session.map(_.contains("testAttributeName")) mustEqual Some(true)
+      next.underlyingActor.session.map(_.status) mustEqual Some(OK)
     }
 
     "record a failed open and advance" in new scope {
@@ -50,85 +52,100 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
         any[WebSocketListener]
       ) throws new IOException("testErrorMessage"))
 
+      Thread.sleep(100)
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(KO), anyLong, anyLong, anArgThat(contains("testErrorMessage")))
-      next.underlyingActor.session.map(_.isAttributeDefined("testAttributeName")) mustEqual Some(false)
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(true)
+      next.underlyingActor.session.map(_.contains("testAttributeName")) mustEqual Some(false)
+      next.underlyingActor.session.map(_.status) mustEqual Some(KO)
     }
 
     "record an incomplete open as failed and advance" in new scope {
       open(webSocketClient(_.onError(new IOException("testException"))))
 
+      Thread.sleep(100)
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(KO), anyLong, anyLong, anArgThat(contains("testException")))
-      next.underlyingActor.session.map(_.isAttributeDefined("testAttributeName")) mustEqual Some(false)
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(true)
+      next.underlyingActor.session.map(_.contains("testAttributeName")) mustEqual Some(false)
+      next.underlyingActor.session.map(_.status) mustEqual Some(KO)
     }
 
     "record a close-before-open as failed and advance" in new scope {
       open(webSocketClient(_.onClose(mock[WebSocket].smart)))
 
+      Thread.sleep(100)
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(KO), anyLong, anyLong, any[Option[String]])
-      next.underlyingActor.session.map(_.isAttributeDefined("testAttributeName")) mustEqual Some(false)
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(true)
+      next.underlyingActor.session.map(_.contains("testAttributeName")) mustEqual Some(false)
+      next.underlyingActor.session.map(_.status) mustEqual Some(KO)
     }
 
     "record a successful send and advance" in new scope {
       val webSocket = mock[WebSocket].smart
       openSuccessfully(webSocket)
+      Thread.sleep(100)
       sendMessage("testMessage")
 
+      Thread.sleep(100)
       there was one(webSocket).sendTextMessage(isEq("testMessage"))
-      there was one(requestLogger).logRequest(any[Session], anyString, isEq(OK), anyLong, anyLong, isEq(null))
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(false)
+      there was two(requestLogger).logRequest(any[Session], anyString, isEq(OK), anyLong, anyLong, isEq(null))
+      next.underlyingActor.session.map(_.status) mustEqual Some(OK)
     }
 
     "record a send after an error as failed and advance" in new scope {
       val webSocket = mock[WebSocket].smart
       reportError(webSocket, new IOException("testException"))
+      Thread.sleep(100)
       sendMessage("testMessage")
 
+      Thread.sleep(100)
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(KO), anyLong, anyLong, anArgThat(contains("testException")))
       there was no(webSocket).sendTextMessage(anyString)
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(true)
+      next.underlyingActor.session.map(_.status) mustEqual Some(KO)
     }
 
     "record a send after an unexpected close as failed and advance" in new scope {
       val webSocket = mock[WebSocket].smart
       closeUnexpectedly(webSocket)
+      Thread.sleep(100)
       sendMessage("testMessage")
+      Thread.sleep(100)
 
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(KO), anyLong, anyLong, any[Option[String]])
       there was no(webSocket).sendTextMessage(anyString)
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(true)
+      next.underlyingActor.session.map(_.status) mustEqual Some(KO)
     }
 
     "record a successful close and advance" in new scope {
       val webSocket = mock[WebSocket].smart
       openSuccessfully(webSocket)
+      Thread.sleep(100)
       close()
+      Thread.sleep(100)
 
       there was one(webSocket).close()
-      there was one(requestLogger).logRequest(any[Session], anyString, isEq(OK), anyLong, anyLong, isEq(null))
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(false)
+      there was two(requestLogger).logRequest(any[Session], anyString, isEq(OK), anyLong, anyLong, isEq(null))
+      next.underlyingActor.session.map(_.status) mustEqual Some(OK)
     }
 
     "record a close after an error as failed and advance" in new scope {
       val webSocket = mock[WebSocket].smart
       reportError(webSocket, new IOException("testException"))
+      Thread.sleep(100)
       close()
+      Thread.sleep(100)
 
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(KO), anyLong, anyLong, anArgThat(contains("testException")))
       there was no(webSocket).sendTextMessage(anyString)
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(true)
+      next.underlyingActor.session.map(_.status) mustEqual Some(KO)
     }
 
     "record a close after an unexpected close as failed and advance" in new scope {
       val webSocket = mock[WebSocket].smart
       closeUnexpectedly(webSocket)
+      Thread.sleep(100)
       close()
+      Thread.sleep(100)
 
       there was one(requestLogger).logRequest(any[Session], anyString, isEq(KO), anyLong, anyLong, any[Option[String]])
       there was no(webSocket).sendTextMessage(anyString)
-      next.underlyingActor.session.map(_.isFailed) mustEqual Some(true)
+      next.underlyingActor.session.map(_.status) mustEqual Some(KO)
     }
   }
 
@@ -151,8 +168,7 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
       next = TestActorRef[DummyAction](Props(new DummyAction))(system)
       val action = Predef.websocket("testAttributeName")
         .open("ws://dummy/", "testRequestName")(webSocketClient, requestLogger)
-        .withNext(next).asInstanceOf[OpenWebSocketActionBuilder]
-        .build()
+        .build(next)
 
       action ! new Session("test", 0)
     }
@@ -172,13 +188,12 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
       reset(requestLogger)
     }
 
-    def sendMessage(message: String) {
+    def sendMessage(message: Expression[String]) {
       val session = next.underlyingActor.session.get
       next = TestActorRef[DummyAction](Props(new DummyAction))(system)
       val action = Predef.websocket("testAttributeName")
-        .sendMessage(message)
-        .withNext(next).asInstanceOf[SendWebSocketMessageActionBuilder]
-        .build()
+        .sendMessage(message, "testRequestName")
+        .build(next)
 
       action ! session
     }
@@ -187,9 +202,8 @@ class WebSocketActorSpec extends Specification with AllExpectations with Mockito
       val session = next.underlyingActor.session.get
       next = TestActorRef[DummyAction](Props(new DummyAction))(system)
       val action = Predef.websocket("testAttributeName")
-        .close()
-        .withNext(next).asInstanceOf[CloseWebSocketActionBuilder]
-        .build()
+        .close("testRequestName")
+        .build(next)
 
       action ! session
     }
@@ -207,5 +221,3 @@ class DummyAction extends Actor {
     case s: Session => session = Some(s)
   }
 }
-
-object DummyProtocolConfigurationRegistry extends ProtocolConfigurationRegistry(Map())
