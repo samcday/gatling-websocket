@@ -313,7 +313,7 @@ private[websocket] class OpenWebSocketAction(
   def execute(session: Session) {
     val rActionName = resolvedActionName(session)
 
-    info("Opening websocket '" + attributeName + "': Scenario '" +
+    logger.info("Opening websocket '" + attributeName + "': Scenario '" +
       session.scenarioName + "', UserId #" + session.userId)
 
     val actor = context.actorOf(Props(new WebSocketActor(attributeName, requestLogger)))
@@ -353,7 +353,7 @@ private[websocket] class OpenWebSocketAction(
       })
     } catch {
       case e: IOException =>
-        actor ! OnFailedOpen(rActionName, e.getMessage, started, nowMillis, next, session)
+        actor ! OnFailedOpen(rActionName., e.getMessage, started, nowMillis, next, session)
     }
   }
 }
@@ -378,7 +378,7 @@ private[websocket] class CloseWebSocketAction(
     registry: ProtocolConfigurationRegistry) extends WebSocketAction(actionName) {
   def execute(session: Session) {
     val rActionName = resolvedActionName(session)
-    info("Closing websocket '" + attributeName + "': Scenario '" +
+    logger.info("Closing websocket '" + attributeName + "': Scenario '" +
       session.scenarioName + "', UserId #" + session.userId)
     session(attributeName).asOption[(ActorRef, _)] foreach {
       _._1 ! Close(rActionName, next, session)
@@ -399,21 +399,21 @@ private[websocket] class WebSocketActor(
       next ! session.set(attributeName, (self, openedWebSocket))
 
     case OnFailedOpen(actionName, message, started, ended, next, session) =>
-      warn("Websocket '" + attributeName + "' failed to open: " + message)
+      logger.warn("Websocket '" + attributeName + "' failed to open: " + message)
       requestLogger.logRequest(session, actionName, KO, started, ended, Some(message))
       next ! session.markAsFailed
       context.stop(self)
 
     case OnMessage(message) =>
-      debug("Received message on websocket '" + attributeName + "':" + eol + message)
+      logger.debug("Received message on websocket '" + attributeName + "':" + eol + message)
 
     case OnClose =>
       errorMessage = Some("Websocket '" + attributeName + "' was unexpectedly closed")
-      warn(errorMessage.get)
+      logger.warn(errorMessage.get)
 
     case OnError(t) =>
       errorMessage = Some("Websocket '" + attributeName + "' gave an error: '" + t.getMessage + "'")
-      warn(errorMessage.get)
+      logger.warn(errorMessage.get)
 
     case SendMessage(actionName, message, next, session) =>
       if (!handleEarlierError(actionName, next, session)) {
